@@ -1,0 +1,342 @@
+---
+title: "SPAH eoPRED score and placental pathologies"
+author: "Hannah Illing"
+date: "`r format(Sys.time(), '%Y %B %d')`"
+#Date created: 2025,08,08
+output: 
+  html_document:
+    keep_md: yes
+    code_folding: show
+    toc: true  
+    toc_depth: 4
+    toc_float: 
+      collapsed: true 
+      smooth_scroll: true
+---
+
+## Set-up
+
+### Load Packages 
+
+```{r packages, message=F,warning=F, include=F}
+
+library(here)
+library(tidyverse)
+library(ggpubr)
+library(cowplot)
+library(rstatix)
+library(jtools)
+library(Hmisc)
+library(corrplot)
+library(cowplot)
+library(ggrepel)
+library(xlsx)
+
+set.seed(4815)
+
+```
+
+### Style Guide
+
+```{r style, include=F}
+
+#set document style
+theme_set(theme_minimal())
+theme_update(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(), 
+  axis.line = element_line(colour = "black"),
+  axis.title.x = element_text(size = 16),
+  axis.title.y = element_text(size = 16),
+  axis.text = element_text(size = 14),
+  strip.text= element_text(size = 16, color = "black"),
+  legend.position="none"
+)
+
+
+categories <- c("#bf4e52","#631215","grey55","grey22") 
+categories2 <- c("darkgrey","#D3AB04","#e05600","#3b6b4a","#033F63")
+mvm_pal<- c("#87b8d6","#6099bd","#407799","#033F63","#02253B")
+
+```
+
+### Load Data
+
+```{r data}
+
+metadata <- readRDS(here::here("D. Pathology Project/02_Outputs/AA. Cleaned/SPAH_metadata_ss_filtered.rds"))
+dim(metadata) #493 x 162
+
+#fix some variable classes
+metadata <- metadata %>%
+  mutate(Sex_Predic = as.factor(Sex_Predic),
+         primi_gravida = as.factor(pcr_gravida == "1"),
+         primi_para = as.factor(parity == "0"),
+         Placenta_SGAvAGAvLGA = as.factor(Placenta_SGAvAGAvLGA),
+         Feto_placental_wt = pcr_birth_wt/Placental_wt,
+         pcr_diabetes_any = as.factor(pcr_diabetes_any),
+         Race_AmIndALNative = as.factor(Race_AmIndALNative),
+         Race_Asian = as.factor(Race_Asian),
+         Race_Black = as.factor(Race_Black),
+         Race_HINativePacIsl = as.factor(Race_HINativePacIsl), 
+         Race_white = as.factor(Race_white),
+         Race_Other = as.factor(Race_Other),
+         Ethnicity_HispYN = as.factor(Ethnicity_HispYN),
+         acute_inflammation_3cat = as.factor(acute_inflammation_3cat),
+         chronic_inflammation_3cat = as.factor(chronic_inflammation_3cat)) %>% 
+#note that one sample is mistakenly labelled as FVM in the FETAL_VASC_PATH column
+#Use the FETAL_VASC_PATH column to create an updated FETAL_VASC_PATH variable
+  mutate(FETAL_VASC_PATH = as.factor(ifelse(Fetal_vasc_path_3cat==0,0,1)))
+
+```
+
+## Figure 1 
+
+```{r fig-1-part-1}
+
+#Does the cutoff accurately assign EOPE class to cases of EOPE?
+table(metadata$PE_Status, metadata$PE_GA_state) #5/7 EOPE, 9/42 LOPE, 5/40 nPTB, 14/402 nTB
+
+stat.test.pegastate <- dunn_test(EOPE~PE_GA_state, data= metadata)
+stat.test.pegastate <- stat.test.pegastate %>%
+  mutate(p.adj=round(p.adj, digits=3))%>%
+  filter(p.adj<0.05)%>%
+  mutate(y.position = c(0.89,0.95,0.81),
+         PE_GA_state = group1,
+         p.adj = case_when(p.adj<0.001 ~ "p < 0.001", 
+                           p.adj>=0.05 ~ "",
+                           .default = paste("p = ",p.adj)))
+
+fig_1_a <- metadata %>%
+  filter(!is.na(PE_GA_state))%>%
+  ggplot(aes(x=PE_GA_state, y = EOPE, color=PE_GA_state, fill=PE_GA_state))+
+  geom_point(alpha=0.5, position=position_jitterdodge(jitter.width=0.2), size=2.5)+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  #geom_hline(yintercept = 0.55, color="grey", linetype="dashed", linewidth=1)+
+  scale_color_manual(values = categories)+
+  scale_fill_manual(values = categories)+
+  labs(y = "eoPRED score", x = "Clinical Diagnosis")+
+  stat_pvalue_manual(stat.test.pegastate, label="{p.adj}", tip.length=0.01)+
+  stat_compare_means(aes(group=PE_GA_state), label.x = 0.95)+
+  scale_x_discrete(labels=c("EOPE"="EOPE","LOPE"="LOPE","nPTB"="PTB","nTB"="TB"))+
+  ylim(0,1)
+fig_1_a
+
+fig_1_b <- metadata %>%
+  filter(!is.na(new_pcr_hypertension_gestation)) %>%
+  filter(PE_GA_state %in% c("nPTB","nTB"))%>%
+  ggplot(aes(x=PE_GA_state, y = EOPE, color=new_pcr_hypertension_gestation, fill=new_pcr_hypertension_gestation))+
+  geom_point(alpha=0.5, position=position_jitterdodge(jitter.width=0.2), size=2.5)+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  labs(y = "eoPRED score", x = "Gestational Age")+
+  scale_x_discrete(labels=c("nPTB"="Preterm","nTB"="Term"))+
+  scale_fill_discrete(labels=c("1"="Gestational Hypertension","0"="Normotensive"),
+                      type =c("grey55","grey22"))+
+  scale_color_discrete(labels=c("1"="Gestational Hypertension","0"="Normotensive"),
+                       type = c("grey55","grey22"))+
+  stat_compare_means(label.x = 0.95)+
+  theme(legend.position.inside = c(0.17,0.11),
+        legend.position="inside", legend.background= element_rect(color = "grey"),
+        legend.title = element_blank())+
+  ylim(0,1)
+fig_1_b
+
+
+```
+
+```{r fig-1-part2}
+
+## Is eoPRED score higher in all samples with MVM?
+wilcox_test(EOPE ~ mvm_di, data = metadata)
+metadata %>%
+  group_by(mvm_di) %>%
+  summarise_at(vars(EOPE), list(MEAN = mean))
+
+## Is eoPRED score higher in all samples with MVM? (without EOPE)
+wilcox_test(EOPE ~ mvm_di, data = (metadata %>%
+              filter(!PE_GA_state == "EOPE")))
+
+#MVM grade
+stat.test.mvmgrade <- dunn_test(EOPE ~mvm_score_3cat, data=metadata)
+stat.test.mvmgrade <- stat.test.mvmgrade %>%
+  mutate(p.adj=round(p.adj, digits = 3))%>%
+  mutate(y.position = c(0.82,0.88,0.97), mvm_score_3cat = group1,
+         p.adj = ifelse(p.adj<0.001, "p < 0.001",paste("p = ",p.adj)))
+
+fig_1_c <- metadata %>%
+  filter(!is.na(mvm_score_3cat))%>%
+  ggplot(aes(x=mvm_score_3cat, y=EOPE, color = mvm_score_3cat, fill= mvm_score_3cat))+
+  geom_point(alpha=0.5, position=position_jitterdodge(jitter.width=0.2), size=2.5)+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  scale_fill_manual(values = c(categories2[1],mvm_pal[2], mvm_pal[4]))+
+  scale_color_manual(values = c(categories2[1],mvm_pal[2],mvm_pal[4]))+
+  labs(x="MVM Grade", y="eoPRED score")+
+  ylim(0,1)+
+  scale_x_discrete(labels = c("0" = "No MVM","1" = "Low Grade","2" = "High Grade"))+
+  stat_pvalue_manual(stat.test.mvmgrade, label="{p.adj}", tip.length=0.01)+
+  stat_compare_means(aes(group=mvm_score_3cat), label.x = 0.9)
+fig_1_c
+
+fig_1_d <- metadata %>%
+  filter(!is.na(mvm_score_3cat))%>%
+  filter(!is.na(PE_GA_state)) %>%
+  ggplot(aes(x=PE_GA_state, y=EOPE, color = mvm_score_3cat, fill= mvm_score_3cat))+
+  geom_point(alpha=0.5, position=position_jitterdodge(jitter.width=0.2), size=2.5)+
+  geom_boxplot(alpha=0.5, outlier.shape = NA, position =  position_dodge2(width = 0.75, preserve = "single"))+
+  scale_fill_manual(values = c(categories2[1],mvm_pal[2], mvm_pal[4]),
+                     labels=c("0" = "No MVM","1" = "Low Grade","2" = "High Grade"))+
+  scale_color_manual(values = c(categories2[1],mvm_pal[2],mvm_pal[4]),
+                     labels=c("0" = "No MVM","1" = "Low Grade","2" = "High Grade"))+
+  labs(x="Clinical Diagnosis", y="eoPRED score", color="", fill="")+
+  ylim(0,1)+
+  #stat_compare_means(aes(label = paste("p = ",round(as.numeric(..p.format..),3))))+
+  annotate(geom="text", x=2, y=1, col="black", size = 4, label="p=0.02")+
+  annotate(geom="text", x=3, y=1, col="black", size = 4, label="p=0.02")+
+  annotate(geom="text", x=4, y=1, col="black", size = 4, label="p=0.002")+
+  theme(legend.position.inside = c(0.1,0.15),
+        legend.position="inside", legend.background= element_rect(color = "grey"),
+        legend.title = element_blank())+
+scale_x_discrete(labels=c("EOPE"="EOPE","LOPE"="LOPE","nPTB"="PTB","nTB"="TB"))
+fig_1_d
+
+
+fig_1 <- plot_grid(fig_1_a, NULL, fig_1_b, 
+                   NULL, NULL, NULL,
+                   fig_1_c, NULL, fig_1_d,
+                   labels = c("A.","","B.","","","","C.","","D."),
+                   nrow = 3, ncol=3,
+                   rel_widths = c(1,0.1,1), rel_heights = c(1,0.1,1))
+fig_1
+
+ggsave("Figure 1 - 2026.png", plot = fig_1, path = here::here("D. Pathology Project/02_Outputs/AA. Cleaned/eoPRED Paper/"), width = 14, height = 8, device = "png")
+
+```
+
+## Table 1
+
+Since gestational age and cell-type proportions are associated, here I tried to look at the association between eoPRED score and cell-type proportions, adjusting for gestational age.
+
+```{r eopred-cells}
+  
+## Individual Cell Types
+#EOPE ~ GA + STB
+fit_cells_stb <- lm(EOPE ~ ga_continuous + Syncytiotrophoblast, data = metadata)
+fit_cells_stb_coef <- cbind(coef(summary(fit_cells_stb)))
+signif(fit_cells_stb_coef, digits = 3)
+
+#EOPE ~ GA + CTB
+fit_cells_ctb <- lm(EOPE ~ ga_continuous + Trophoblasts, data = metadata)
+fit_cells_ctb_coef <- cbind(coef(summary(fit_cells_ctb)))
+signif(fit_cells_ctb_coef, digits = 3)
+
+#EOPE ~ GA + Endothelial
+fit_cells_end <- lm(EOPE ~ ga_continuous + Endothelial, data = metadata)
+fit_cells_end_coef <- cbind(coef(summary(fit_cells_end)))
+signif(fit_cells_end_coef, digits = 3)
+
+#EOPE ~ GA + Stromal
+fit_cells_str <- lm(EOPE ~ ga_continuous + Stromal, data = metadata)
+fit_cells_str_coef <- cbind(coef(summary(fit_cells_str)))
+signif(fit_cells_str_coef, digits = 3)
+
+#EOPE ~ GA + Hofbauer
+fit_cells_hbc <- lm(EOPE ~ ga_continuous + Hofbauer, data = metadata)
+fit_cells_hbc_coef <- cbind(coef(summary(fit_cells_hbc)))
+signif(fit_cells_hbc_coef, digits = 3)
+
+#EOPE ~ GA + nRBC
+fit_cells_rbc <- lm(EOPE ~ ga_continuous + nRBC, data = metadata)
+fit_cells_rbc_coef <- cbind(coef(summary(fit_cells_rbc)))
+signif(fit_cells_rbc_coef, digits = 3)
+
+```
+
+## Supplementary Figure 1
+
+MVM Lesions:
+
+-   `FN_AA` = Fibrinoid necrosis/Acute atherosis involving basal or parietal decidual vessels
+-   `Musc_BP_arterioles` = Muscularized basal plate arterioles
+-   `MHMA` = Mural hypertrophy of membrane arterioles
+-   `Basal_Dec_vasc_thromb` = Basal decidual vascular thrombosis
+-   `Infarct` = Any infarction of the villous parenchyma characterized by collapse of the intervillous space and coagulative necrosis. 
+-   `Infarct_multiple` = >1 Infarct
+-   `Increased_SK` = Increased syncytial knots for gestational age
+-   `Villous_AG` = Villous aglutination
+-   `Increased_PVF` = Increased perivillous fibrin deposition for gestational age
+-   `DVH_STV` = Distal villous hypoplasia/small terminal villi for gestational age
+
+-   `BP_acute_intradecid_hemmorhage` = Basal plate with acute intradecidual hemorrhage
+-   `RP_blood_hematoma` = Basal plate with Retroplacental blood/hematoma
+-   `RP_blood_hematoma_hemosid` = Basal plate with Retroplacental blood/hematoma and hemosiderin
+-   `RP_blood_hematoma_infarct` = Basal plate with Retroplacental blood/hematoma and associated infarction
+
+```{r mvm-lesions}
+
+# Read in the extra histology data
+histodata <- read.csv(here::here("B. Data/A. Cohort Data/histology_cleaned_11.15.23.csv"))
+dim(histodata) #575 x 98
+histodata$ï..ID <- sub("^","SPAH_", histodata$ï..ID)
+head(histodata)
+
+histodata <- metadata %>%
+  dplyr::select(Sample_ID, EOPE)%>%
+  left_join(histodata, by=c("Sample_ID"="ï..ID"))
+
+cov_path <- histodata %>%
+  dplyr::select(
+    EOPE,
+    mvm_di,
+    mvm_score_3cat,
+    MVM_score,
+    MVM_lesion_sum,
+    `FN_AA`,
+    `Musc_BP_arterioles`,
+    `MHMA`,
+    `Basal_Dec_vasc_thromb`,
+    `Infarct`,
+    `Infarct_multiple`,
+    `Increased_SK`,
+    `Villous_AG`,
+    `Increased_PVF`,
+    `DVH_STV`,
+    ACUTE_INFLAMMATION,
+    CHRONIC_INFLAMMATION,
+    FETAL_VASC_PATH) %>%
+  dplyr::rename(
+    eoPRED = EOPE,
+    `MVM (Y/N)` = mvm_di,
+    `MVM grade` = mvm_score_3cat,
+    `MVM score` = MVM_score,
+    `MVM lesions (n)` = MVM_lesion_sum,
+    `Fibrinoid necrosis/Acute atherosis` = `FN_AA`,
+    `Muscularized basal plate arterioles` = `Musc_BP_arterioles`,
+    `Mural hypertrophy of membrane arterioles` = `MHMA`,
+    `Basal decidual vascular thrombosis` = `Basal_Dec_vasc_thromb`,
+    `Infarct >1` = `Infarct_multiple`,
+    `Increased syncytial knots` = `Increased_SK`,
+    `Villous aglutination` = `Villous_AG`,
+    `Increased perivillous fibrin deposition` = `Increased_PVF`,
+    `Distal villous hypoplasia/small terminal villi` = `DVH_STV`,
+    AI = ACUTE_INFLAMMATION,
+    CI = CHRONIC_INFLAMMATION,
+    FVM = FETAL_VASC_PATH
+  )%>%
+  mutate_if(is.character, as.factor)%>%
+  mutate_if(is.factor, as.numeric)
+
+
+res <- rcorr(as.matrix(cov_path))
+
+# Initialize file path
+png(height=750, width=800, file=here::here("D. Pathology Project/02_Outputs/AA. Cleaned/eoPRED Paper/Figure S1 - 2026.png"))
+
+corrplot(res$r, p.mat=res$P, method='color', type='lower', diag =F,
+         insig='blank', #p-val<0.5 not shown
+         tl.col='black', tl.srt = 55, #axis text colour and angle
+         addgrid.col = 'grey', col = rev(COL2('RdBu', 10)), #grid colours
+         addCoef.col = 'black', number.cex = 0.6) #add R values
+
+dev.off()
+
+```
